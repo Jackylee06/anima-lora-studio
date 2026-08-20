@@ -1,0 +1,76 @@
+{
+  "name": "@anima/desktop",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Anima LoRA Studio Windows desktop application",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --configLoader native --host 127.0.0.1\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on tcp:5173 file:dist-electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc -p tsconfig.json --noEmit && vite build --configLoader native && tsc -p tsconfig.electron.json",
+    "build:worker": "powershell -ExecutionPolicy Bypass -File ../../scripts/build-worker.ps1",
+    "package:win": "npm run build && npm run build:worker && electron-builder --win nsis",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "test": "vitest run --config vitest.config.mjs --configLoader native"
+  },
+  "dependencies": {
+    "@anima/contracts": "0.1.0",
+    "@tanstack/react-virtual": "^3.13.12",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.5.2",
+    "concurrently": "^9.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "37.2.6",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "ai.circlestone.community.animalorastudio",
+    "productName": "Anima LoRA Studio",
+    "asar": true,
+    "directories": {
+      "output": "../../release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../build/worker/anima-worker.exe",
+        "to": "worker/anima-worker.exe"
+      },
+      {
+        "from": "../../services/worker/resources",
+        "to": "worker/resources"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Anima-LoRA-Studio-${version}-Setup-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Anima LoRA Studio"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "anima-lora-studio",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Anima LoRA 数据集整理、caption 与训练工作流桌面软件",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @anima/desktop",
+    "build": "npm run build -w @anima/contracts && npm run build -w @anima/desktop",
+    "package:win": "npm run package:win -w @anima/desktop",
+    "test": "npm run test -w @anima/contracts && npm run test -w @anima/desktop && python -m unittest discover -s services/worker/tests -v",
+    "test:python": "python -m unittest discover -s services/worker/tests -v",
+    "typecheck": "npm run typecheck -w @anima/contracts && npm run typecheck -w @anima/desktop"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  }
+}
