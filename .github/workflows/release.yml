@@ -57,3 +57,12 @@ jobs:
         run: npm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish differential update blockmap
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $blockmap = "release/Anima-LoRA-Studio-$version-Setup-x64.exe.blockmap"
+          gh release upload "${{ github.ref_name }}" $blockmap --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
