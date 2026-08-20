@@ -1,14 +1,16 @@
 {
   "name": "@anima/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Anima LoRA Studio Windows desktop application",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"vite --configLoader native --host 127.0.0.1\" \"tsc -p tsconfig.electron.json --watch --preserveWatchOutput\" \"wait-on tcp:5173 file:dist-electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "build": "tsc -p tsconfig.json --noEmit && vite build --configLoader native && tsc -p tsconfig.electron.json",
+    "clean": "node ../../scripts/clean-desktop-build.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json --noEmit && vite build --configLoader native && tsc -p tsconfig.electron.json",
     "build:worker": "powershell -ExecutionPolicy Bypass -File ../../scripts/build-worker.ps1",
     "package:win": "npm run build && npm run build:worker && electron-builder --win nsis",
+    "release:win": "npm run build && npm run build:worker && electron-builder --win nsis --publish always",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run --config vitest.config.mjs --configLoader native"
   },
@@ -16,6 +18,7 @@
     "@anima/contracts": "0.1.0",
     "@tanstack/react-virtual": "^3.13.12",
     "clsx": "^2.1.1",
+    "electron-updater": "6.8.9",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
@@ -64,6 +67,12 @@
         }
       ],
       "artifactName": "Anima-LoRA-Studio-${version}-Setup-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Jackylee06",
+      "repo": "anima-lora-studio",
+      "releaseType": "release"
     },
     "nsis": {
       "oneClick": false,

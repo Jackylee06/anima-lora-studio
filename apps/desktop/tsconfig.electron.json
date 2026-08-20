@@ -8,5 +8,6 @@
     "rootDir": "electron",
     "types": ["node", "electron"]
   },
-  "include": ["electron/**/*.ts"]
+  "include": ["electron/**/*.ts"],
+  "exclude": ["electron/**/*.test.ts"]
 }

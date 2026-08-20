@@ -129,6 +129,33 @@ export interface ModelEntry {
   metadata: Record<string, unknown>;
 }
 
+export type AppUpdateStatus =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "available"
+  | "ignored"
+  | "downloading"
+  | "downloaded"
+  | "not-available"
+  | "error";
+
+export interface AppUpdateState {
+  currentVersion: string;
+  status: AppUpdateStatus;
+  availableVersion?: string;
+  releaseName?: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+  progress?: number;
+  bytesPerSecond?: number;
+  transferred?: number;
+  total?: number;
+  error?: string;
+  checkedAt?: string;
+  ignoredVersion?: string;
+}
+
 export interface RpcRequest<T = unknown> {
   v: typeof RPC_VERSION;
   id: string;

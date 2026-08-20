@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { WorkerEvent } from "@anima/contracts";
+import type { AppUpdateState, WorkerEvent } from "@anima/contracts";
 
 declare global {
   interface Window {
@@ -13,10 +13,17 @@ declare global {
       getSecret(key: string): Promise<string | null>;
       setSecret(key: string, value: string): Promise<void>;
       deleteSecret(key: string): Promise<void>;
+      getUpdateState(): Promise<AppUpdateState>;
+      checkForUpdates(): Promise<AppUpdateState>;
+      downloadUpdate(): Promise<AppUpdateState>;
+      cancelUpdateDownload(): Promise<AppUpdateState>;
+      ignoreUpdate(): Promise<AppUpdateState>;
+      clearIgnoredUpdate(): Promise<AppUpdateState>;
+      installUpdate(): Promise<void>;
+      onUpdateState(callback: (state: AppUpdateState) => void): () => void;
       platform: NodeJS.Platform;
     };
   }
 }
 
 export {};
-

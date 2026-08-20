@@ -23,6 +23,7 @@
 - 硬链接优先的可复现导出，附 `manifest.json` 和 `dataset.toml`。
 - 固定 `kohya-ss/sd-scripts` commit `37a1cbbc5725ed2a3575506e7bd2001c9908ac92` 的 `anima_train_network.py`；安全预设、参数兼容性检查、两步显存探测、日志、保存点暂停和恢复。
 - Windows 安装器、隔离 caption/trainer Python 环境引导、模型注册和 SHA-256 校验。
+- Windows 安装版使用 GitHub Releases 检查更新，支持手动下载、进度、取消、重试、忽略版本以及重启安装；运行任务期间禁止安装更新。
 - Caption/Trainer 环境固定使用 PyTorch 2.8.0 + Torchvision 0.23.0 的官方 CUDA 12.8 Windows wheel；后续依赖安装受同一 constraints 文件约束并在完成后验证 CUDA/BF16。
 - Hugging Face 固定 revision 断点下载；Anima 权重下载前强制记录许可确认。
 
@@ -57,6 +58,17 @@ npm run package:win
 ```
 
 产物写入 `release/`。构建脚本会在仓库的 `.runtime/build-worker` 中创建隔离环境并使用 PyInstaller；最终安装包运行核心界面与扫描功能时不依赖系统 Python。WD14、JoyCaption 和训练依赖由首次启动向导安装到 `%LOCALAPPDATA%\AnimaLoRAStudio\runtime`。
+
+## 发布与应用更新
+
+更新源为公开仓库 `Jackylee06/anima-lora-studio` 的稳定 GitHub Releases。推送与 `package.json` 版本一致的标签会在 Windows runner 上重新运行类型检查和全部测试，然后构建并发布 NSIS 安装包、blockmap 与 `latest.yml`：
+
+```powershell
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+开发模式不会访问更新源。已安装应用启动约 12 秒后静默检查，只有用户确认后才下载；下载完成后仍需点击“重启并安装”。正式分发前建议配置 Windows Authenticode 代码签名，避免 SmartScreen 警告并强化发布者身份校验。
 
 ## 推荐使用顺序
 

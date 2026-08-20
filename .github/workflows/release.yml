@@ -1,0 +1,59 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/worker/resources/requirements-worker-build.txt
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $rootVersion = node -p "require('./package.json').version"
+          $desktopVersion = node -p "require('./apps/desktop/package.json').version"
+          $tagVersion = "${{ github.ref_name }}".TrimStart("v")
+          if ($rootVersion -ne $desktopVersion -or $rootVersion -ne $tagVersion) {
+            throw "Tag v$tagVersion must match root and desktop versions ($rootVersion / $desktopVersion)."
+          }
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check -r services/worker/resources/requirements-worker-build.txt
+
+      - name: Verify source
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build and publish GitHub Release
+        run: npm run release:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

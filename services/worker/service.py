@@ -137,7 +137,7 @@ class WorkerService:
         return handler(params)
 
     def system_ping(self, _params: dict[str, Any]) -> dict[str, Any]:
-        return {"version": "0.1.1", "rpcVersion": 1, "ready": True, "projectOpen": self.project is not None}
+        return {"version": "0.1.2", "rpcVersion": 1, "ready": True, "projectOpen": self.project is not None}
 
     def system_diagnostics(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {**system_diagnostics(), "runtime": self.runtime.status(), "project": self.project}

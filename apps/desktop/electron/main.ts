@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { WorkerEvent } from "@anima/contracts" with { "resolution-mode": "import" };
+import electronUpdater, { CancellationToken } from "electron-updater";
+import { UpdateManager } from "./updateManager";
 import { WorkerBridge } from "./workerBridge";
 
 protocol.registerSchemesAsPrivileged([
@@ -13,7 +15,9 @@ const bridge = new WorkerBridge();
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let bridgeStopped = false;
 let hasActiveJobs = false;
+let updateManager: UpdateManager | null = null;
 const activeJobIds = new Set<string>();
 const allowedRoots = new Set<string>();
 
@@ -93,14 +97,43 @@ function writeSecrets(values: Record<string, string>): void {
   fs.writeFileSync(secretFile(), JSON.stringify(values), { encoding: "utf8", mode: 0o600 });
 }
 
-app.on("before-quit", () => { isQuitting = true; });
+function updatePreferenceFile(): string {
+  return path.join(app.getPath("userData"), "update-preferences.json");
+}
+
+function readIgnoredVersion(): string | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(updatePreferenceFile(), "utf8")) as { ignoredVersion?: unknown };
+    return typeof value.ignoredVersion === "string" ? value.ignoredVersion : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeIgnoredVersion(version: string | null): void {
+  const file = updatePreferenceFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ignoredVersion: version }), { encoding: "utf8", mode: 0o600 });
+}
+
+app.on("before-quit", () => { isQuitting = true; updateManager?.dispose(); });
 app.on("will-quit", (event) => {
-  if (!isQuitting) return;
+  if (!isQuitting || bridgeStopped) return;
   event.preventDefault();
-  void bridge.stop().finally(() => app.exit(0));
+  void bridge.stop().finally(() => { bridgeStopped = true; app.exit(0); });
 });
 
 app.whenReady().then(async () => {
+  const { autoUpdater } = electronUpdater;
+  updateManager = new UpdateManager({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    enabled: app.isPackaged && process.platform === "win32",
+    store: { readIgnoredVersion, writeIgnoredVersion },
+    createCancellationToken: () => new CancellationToken(),
+    onState: (state) => mainWindow?.webContents.send("update:state", state)
+  });
+
   protocol.handle("anima-file", (request) => {
     try {
       const encoded = new URL(request.url).pathname.replace(/^\//, "");
@@ -143,6 +176,20 @@ app.whenReady().then(async () => {
     delete secrets[key];
     writeSecrets(secrets);
   });
+  ipcMain.handle("update:status", () => updateManager?.getState());
+  ipcMain.handle("update:check", () => updateManager?.check());
+  ipcMain.handle("update:download", () => updateManager?.download());
+  ipcMain.handle("update:cancel", () => updateManager?.cancelDownload());
+  ipcMain.handle("update:ignore", () => updateManager?.ignoreAvailableVersion());
+  ipcMain.handle("update:clear-ignore", () => updateManager?.clearIgnoredVersion());
+  ipcMain.handle("update:install", async () => {
+    if (hasActiveJobs) throw new Error("训练或推理任务仍在运行，请先停止任务再安装更新");
+    if (!updateManager) throw new Error("更新服务尚未初始化");
+    isQuitting = true;
+    await bridge.stop();
+    bridgeStopped = true;
+    updateManager.quitAndInstall();
+  });
 
   bridge.on("event", (payload: WorkerEvent) => {
     if (payload.event === "job.updated" && payload.data && typeof payload.data === "object") {
@@ -157,6 +204,7 @@ app.whenReady().then(async () => {
   });
   await bridge.start();
   createWindow();
+  updateManager.startAutoCheck();
 });
 
 app.on("activate", () => {

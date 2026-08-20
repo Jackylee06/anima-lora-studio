@@ -2,6 +2,7 @@ import type { ModelEntry, Project, WorkerEvent } from "@anima/contracts";
 import { useEffect, useState } from "react";
 import { CheckCircle2, Cpu, Download, FolderOpen, HardDrive, RefreshCw, Shield, Wrench } from "lucide-react";
 import { Badge, Button, Field, Panel } from "../components/ui";
+import { AppUpdates } from "../components/AppUpdates";
 import { errorMessage, onWorkerEvent, rpc } from "../lib/api";
 
 interface TorchRuntime { version: string; cudaRuntime: string; cudaAvailable: boolean; bf16Supported: boolean; device: string; validated: boolean }
@@ -77,6 +78,7 @@ export function SettingsPage({ project, onProject }: { project: Project; onProje
   return <div className="page-content">
     <header className="page-heading compact"><div><p className="eyebrow">SYSTEM</p><h1>模型与设置</h1><p>模型文件可复用现有 ComfyUI 目录；大文件不会复制进项目。</p></div><Button className="button-secondary" onClick={() => void load()}><RefreshCw size={15} />刷新状态</Button></header>
     {message && <div className="info-box">{message}</div>}
+    <AppUpdates />
     <div className="settings-grid">
       <Panel title="硬件诊断">
         {diagnostics?.nvidia?.length ? diagnostics.nvidia.map((gpu) => <div className="hardware-card" key={gpu.name}><div className="hardware-icon"><Cpu /></div><div><strong>{gpu.name}</strong><p>{gpu.memoryTotalMiB} MiB VRAM · 当前空闲 {gpu.memoryFreeMiB} MiB</p><small>Driver {gpu.driver}</small></div><Badge tone={gpu.memoryTotalMiB >= 15000 ? "good" : "warn"}>{gpu.memoryTotalMiB >= 15000 ? "适合 NF4 + LoRA" : "建议低显存预设"}</Badge></div>) : <p className="muted">未检测到 NVIDIA GPU 或 nvidia-smi。</p>}
