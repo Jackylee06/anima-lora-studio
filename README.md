@@ -64,8 +64,9 @@ npm run package:win
 更新源为公开仓库 `Jackylee06/anima-lora-studio` 的稳定 GitHub Releases。推送与 `package.json` 版本一致的标签会在 Windows runner 上重新运行类型检查和全部测试，然后构建并发布 NSIS 安装包、blockmap 与 `latest.yml`：
 
 ```powershell
-git tag v0.1.2
-git push origin v0.1.2
+$version = node -p "require('./package.json').version"
+git tag "v$version"
+git push origin "v$version"
 ```
 
 开发模式不会访问更新源。已安装应用启动约 12 秒后静默检查，只有用户确认后才下载；下载完成后仍需点击“重启并安装”。正式分发前建议配置 Windows Authenticode 代码签名，避免 SmartScreen 警告并强化发布者身份校验。

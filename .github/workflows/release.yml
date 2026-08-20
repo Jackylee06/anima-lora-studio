@@ -38,9 +38,10 @@ jobs:
         run: |
           $rootVersion = node -p "require('./package.json').version"
           $desktopVersion = node -p "require('./apps/desktop/package.json').version"
+          $workerVersion = (Select-String -Path services/worker/constants.py -Pattern '^APP_VERSION = "([^"]+)"$').Matches.Groups[1].Value
           $tagVersion = "${{ github.ref_name }}".TrimStart("v")
-          if ($rootVersion -ne $desktopVersion -or $rootVersion -ne $tagVersion) {
-            throw "Tag v$tagVersion must match root and desktop versions ($rootVersion / $desktopVersion)."
+          if ($rootVersion -ne $desktopVersion -or $rootVersion -ne $workerVersion -or $rootVersion -ne $tagVersion) {
+            throw "Tag v$tagVersion must match root, desktop, and worker versions ($rootVersion / $desktopVersion / $workerVersion)."
           }
 
       - name: Install dependencies

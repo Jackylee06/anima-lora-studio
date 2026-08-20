@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from captions import ANIMA_RULES_VERSION, assemble_caption
+from constants import APP_VERSION
 from database import Database, json_value
 from exporter import export_dataset
 from jobs import JobContext, JobManager
@@ -137,7 +138,7 @@ class WorkerService:
         return handler(params)
 
     def system_ping(self, _params: dict[str, Any]) -> dict[str, Any]:
-        return {"version": "0.1.2", "rpcVersion": 1, "ready": True, "projectOpen": self.project is not None}
+        return {"version": APP_VERSION, "rpcVersion": 1, "ready": True, "projectOpen": self.project is not None}
 
     def system_diagnostics(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {**system_diagnostics(), "runtime": self.runtime.status(), "project": self.project}
