@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { WorkerEvent } from "@anima/contracts" with { "resolution-mode": "import" };
-import electronUpdater, { CancellationToken } from "electron-updater";
+import { autoUpdater, CancellationToken } from "electron-updater";
 import { UpdateManager } from "./updateManager";
 import { WorkerBridge } from "./workerBridge";
 
@@ -124,7 +124,6 @@ app.on("will-quit", (event) => {
 });
 
 app.whenReady().then(async () => {
-  const { autoUpdater } = electronUpdater;
   updateManager = new UpdateManager({
     updater: autoUpdater,
     currentVersion: app.getVersion(),
@@ -205,6 +204,15 @@ app.whenReady().then(async () => {
   await bridge.start();
   createWindow();
   updateManager.startAutoCheck();
+}).catch((error: unknown) => {
+  const details = error instanceof Error ? error.stack || error.message : String(error);
+  console.error("Anima LoRA Studio 启动失败", error);
+  dialog.showErrorBox(
+    "Anima LoRA Studio 启动失败",
+    `${details}\n\n请重新启动应用；如果问题持续，请附上此错误信息。`
+  );
+  isQuitting = true;
+  app.quit();
 });
 
 app.on("activate", () => {
