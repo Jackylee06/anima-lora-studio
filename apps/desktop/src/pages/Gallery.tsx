@@ -1,9 +1,10 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Asset, AssetPage, AssetQuery, ReviewState } from "@anima/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Grid2X2, ImageOff, LoaderCircle, RotateCcw, ScanSearch, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Check, Copy, Grid2X2, ImageOff, LoaderCircle, RotateCcw, ScanSearch, Search, ShieldAlert, X } from "lucide-react";
 import clsx from "clsx";
 import { Badge, Button, Empty } from "../components/ui";
+import { AGE_FILTER_OPTIONS, AI_FILTER_OPTIONS, assetClassification, galleryMetadataQuery, type AgeFilter, type AiFilter } from "../lib/galleryFilters";
 import { cursorWindow, reviewCursorAfterStateChange, shouldIgnoreGalleryShortcut, type ReviewFilter } from "../lib/galleryNavigation";
 import { errorMessage, rpc } from "../lib/api";
 
@@ -20,6 +21,8 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
   const [reviewState, setReviewState] = useState<ReviewFilter>("all");
   const [sort, setSort] = useState<Sort>("path");
   const [search, setSearch] = useState("");
+  const [ageFilter, setAgeFilter] = useState<AgeFilter>("");
+  const [aiFilter, setAiFilter] = useState<AiFilter>("");
   const [columns, setColumns] = useState(() => window.matchMedia("(max-width: 1250px)").matches ? 3 : 4);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -33,9 +36,10 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
     setLoading(true);
     setError(null);
     try {
+      const metadataQuery = galleryMetadataQuery(ageFilter, aiFilter);
       if (view === "overview") {
         const page = await rpc<AssetPage>("assets.query", {
-          kind: "image", reviewState, search, sort, offset: 0, limit: 500,
+          kind: "image", reviewState, search, sort, ...metadataQuery, offset: 0, limit: 500,
         });
         if (requestId !== requestSequence.current) return;
         setData(page);
@@ -46,14 +50,14 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
 
       let reviewWindow = cursorWindow(targetCursor, totalHint);
       let page = await rpc<AssetPage>("assets.query", {
-        kind: "image", reviewState, search, sort, offset: reviewWindow.offset, limit: reviewWindow.limit,
+        kind: "image", reviewState, search, sort, ...metadataQuery, offset: reviewWindow.offset, limit: reviewWindow.limit,
       });
       const normalizedCursor = page.total ? Math.min(Math.max(0, targetCursor), page.total - 1) : 0;
       const normalizedWindow = cursorWindow(normalizedCursor, page.total);
       if (page.total && normalizedWindow.offset !== reviewWindow.offset) {
         reviewWindow = normalizedWindow;
         page = await rpc<AssetPage>("assets.query", {
-          kind: "image", reviewState, search, sort, offset: reviewWindow.offset, limit: reviewWindow.limit,
+          kind: "image", reviewState, search, sort, ...metadataQuery, offset: reviewWindow.offset, limit: reviewWindow.limit,
         });
       } else {
         reviewWindow = normalizedWindow;
@@ -73,7 +77,7 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
     setSelected(new Set());
     const timer = setTimeout(() => void load(0, 0), 180);
     return () => clearTimeout(timer);
-  }, [view, reviewState, search, sort, refreshToken]);
+  }, [view, reviewState, search, ageFilter, aiFilter, sort, refreshToken]);
 
   useEffect(() => {
     const breakpoint = window.matchMedia("(max-width: 1250px)");
@@ -183,12 +187,20 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
       </div>
     </header>
 
-    <div className={clsx("toolbar", view === "review" && "review-toolbar")}>
+    <div className={clsx("toolbar gallery-toolbar", view === "review" && "review-toolbar")}>
       <div className="segmented">
         {(["all", "pending", "kept", "rejected"] as const).map((state) => <button key={state} className={clsx(reviewState === state && "active")} onClick={() => setReviewState(state)}>
           {state === "all" ? "全部" : state === "pending" ? "待定" : state === "kept" ? "保留" : "排除"}
           <span>{state === "all" ? allCount : data.counts[state]}</span>
         </button>)}
+      </div>
+      <div className="gallery-metadata-filters">
+        <label className="gallery-meta-filter"><ShieldAlert size={15} /><select aria-label="年龄分级" value={ageFilter} onChange={(event) => setAgeFilter(event.target.value as AgeFilter)}>
+          {AGE_FILTER_OPTIONS.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
+        </select></label>
+        <label className="gallery-meta-filter"><Bot size={15} /><select aria-label="AI 状态" value={aiFilter} onChange={(event) => setAiFilter(event.target.value as AiFilter)}>
+          {AI_FILTER_OPTIONS.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
+        </select></label>
       </div>
       <div className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索路径、作者或标题" /></div>
       <select className="review-sort" value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
@@ -215,6 +227,7 @@ export function Gallery({ refreshToken }: { refreshToken: number }) {
           <SidePreview asset={previous} direction="previous" onClick={() => void move(-1)} />
           <figure className={clsx("review-current", current?.reviewState)}>
             {current?.kind === "image" ? <img key={current.id} src={window.anima.fileUrl(current.sourcePath)} alt={current.relativePath} /> : <div className="review-image-missing"><ImageOff /><span>{current?.exclusionReason || "无法显示图片"}</span></div>}
+            {current && <ClassificationMarks asset={current} />}
             {current && !current.eligible && <span className="review-exclusion">{current.exclusionReason}</span>}
             {(loading || reviewing) && <div className="review-loading"><LoaderCircle className="spin" /></div>}
           </figure>
@@ -246,6 +259,7 @@ function AssetCard({ asset, selected, onToggle, onState }: { asset: Asset; selec
   return <article className={clsx("asset-card", selected && "selected", asset.reviewState)}>
     <button className="asset-image" onClick={onToggle}>
       {asset.thumbnailPath ? <img src={window.anima.fileUrl(asset.thumbnailPath)} alt={asset.relativePath} loading="lazy" /> : <ImageOff size={30} />}
+      <ClassificationMarks asset={asset} />
       <span className={clsx("select-dot", selected && "checked")}>{selected && <Check size={13} />}</span>
       {asset.metrics.duplicateGroup && <Badge tone="warn"><Copy size={12} />近重复</Badge>}
       {asset.metrics.semanticGroup && <Badge tone="accent">语义相似</Badge>}
@@ -256,12 +270,20 @@ function AssetCard({ asset, selected, onToggle, onState }: { asset: Asset; selec
   </article>;
 }
 
+function ClassificationMarks({ asset, compact = false }: { asset: Asset; compact?: boolean }) {
+  const classification = assetClassification(asset.metadata);
+  return <span className={clsx("classification-marks", compact && "compact")} aria-label={`${classification.ageLabel}，${classification.aiLabel}`}>
+    <span className={clsx("classification-mark", `age-${classification.ageClass}`)}><ShieldAlert size={compact ? 10 : 11} />{classification.ageLabel}</span>
+    <span className={clsx("classification-mark", `ai-${classification.aiClass}`)}><Bot size={compact ? 10 : 11} />{classification.aiLabel}</span>
+  </span>;
+}
+
 function SidePreview({ asset, direction, onClick }: { asset?: Asset; direction: "previous" | "next"; onClick: () => void }) {
   const label = direction === "previous" ? "上一张" : "下一张";
   const Icon = direction === "previous" ? ArrowLeft : ArrowRight;
   return <button className={clsx("review-side", direction)} disabled={!asset} onClick={onClick} aria-label={label}>
     {asset ? <>
-      <div>{asset.thumbnailPath ? <img src={window.anima.fileUrl(asset.thumbnailPath)} alt={asset.relativePath} /> : asset.kind === "image" ? <img src={window.anima.fileUrl(asset.sourcePath)} alt={asset.relativePath} /> : <ImageOff />}</div>
+      <div>{asset.thumbnailPath ? <img src={window.anima.fileUrl(asset.thumbnailPath)} alt={asset.relativePath} /> : asset.kind === "image" ? <img src={window.anima.fileUrl(asset.sourcePath)} alt={asset.relativePath} /> : <ImageOff />}<ClassificationMarks asset={asset} compact /></div>
       <span><Icon size={15} />{label}</span>
     </> : <><div className="review-side-empty"><ImageOff /></div><span><Icon size={15} />{label}</span></>}
   </button>;

@@ -10,5 +10,9 @@ describe("gallery view modes", () => {
     expect(source).toContain('className="gallery-scroll"');
     expect(source).toContain('"review-stage"');
     expect(source).toContain('window.matchMedia("(max-width: 1250px)")');
+    expect(source).toContain('aria-label="年龄分级"');
+    expect(source).toContain('aria-label="AI 状态"');
+    expect(source).toContain("<ClassificationMarks asset={asset}");
+    expect(source).toContain("<ClassificationMarks asset={current}");
   });
 });

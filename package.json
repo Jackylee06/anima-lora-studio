@@ -1,6 +1,6 @@
 {
   "name": "anima-lora-studio",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Anima LoRA 数据集整理、caption 与训练工作流桌面软件",
   "workspaces": [
