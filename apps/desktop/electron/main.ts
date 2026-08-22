@@ -6,6 +6,7 @@ import type { WorkerEvent } from "@anima/contracts" with { "resolution-mode": "i
 import { autoUpdater, CancellationToken } from "electron-updater";
 import { UpdateManager } from "./updateManager";
 import { WorkerBridge } from "./workerBridge";
+import { SourceChangeWatcher } from "./sourceChangeWatcher";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "anima-file", privileges: { secure: true, standard: true, supportFetchAPI: true, stream: true } }
@@ -18,6 +19,7 @@ let isQuitting = false;
 let bridgeStopped = false;
 let hasActiveJobs = false;
 let updateManager: UpdateManager | null = null;
+let sourceWatcher: SourceChangeWatcher | null = null;
 const activeJobIds = new Set<string>();
 const allowedRoots = new Set<string>();
 
@@ -31,6 +33,7 @@ function allowProjectPaths(result: unknown): void {
   for (const key of ["workspacePath", "sourceRoot"]) {
     if (typeof candidate[key] === "string") allowedRoots.add(normalizeRoot(candidate[key]));
   }
+  if (typeof candidate.sourceRoot === "string") sourceWatcher?.configure(candidate.sourceRoot, true);
 }
 
 function isAllowedFile(filePath: string): boolean {
@@ -116,7 +119,7 @@ function writeIgnoredVersion(version: string | null): void {
   fs.writeFileSync(file, JSON.stringify({ ignoredVersion: version }), { encoding: "utf8", mode: 0o600 });
 }
 
-app.on("before-quit", () => { isQuitting = true; updateManager?.dispose(); });
+app.on("before-quit", () => { isQuitting = true; updateManager?.dispose(); sourceWatcher?.dispose(); });
 app.on("will-quit", (event) => {
   if (!isQuitting || bridgeStopped) return;
   event.preventDefault();
@@ -124,6 +127,18 @@ app.on("will-quit", (event) => {
 });
 
 app.whenReady().then(async () => {
+  sourceWatcher = new SourceChangeWatcher({
+    watch: (root, listener) => {
+      const watcher = fs.watch(root, { recursive: true }, (event, filename) => {
+        listener(filename ? filename.toString() : null, event);
+      });
+      watcher.on("error", (error) => console.error("Pixiv 源目录监听失败", error));
+      return watcher;
+    },
+    scan: () => bridge.request("scan.start", { automatic: true }),
+    isBusy: () => hasActiveJobs,
+    onError: (error) => console.error("Pixiv 自动增量扫描失败", error),
+  });
   updateManager = new UpdateManager({
     updater: autoUpdater,
     currentVersion: app.getVersion(),
@@ -198,6 +213,7 @@ app.whenReady().then(async () => {
       if (jobId && active) activeJobIds.add(jobId);
       else if (jobId) activeJobIds.delete(jobId);
       hasActiveJobs = activeJobIds.size > 0;
+      sourceWatcher?.activeStateChanged();
     }
     mainWindow?.webContents.send("worker:event", payload);
   });

@@ -17,7 +17,7 @@ from models import ModelRegistry
 from naming import DEFAULT_TEMPLATE, TemplateError, compile_template, parse_with_source_root
 from pipeline import run_joycaption, run_refine, run_wd14
 from runtime import RuntimeManager, system_diagnostics
-from scanner import asset_from_row, scan_project
+from scanner import analyze_assets, asset_from_row, register_assets
 from training import build_training_plan, probe_vram, run_training
 from util import atomic_write_json, new_id, safe_slug, utc_now
 
@@ -221,31 +221,61 @@ class WorkerService:
     def scan_start(self, _params: dict[str, Any]) -> dict[str, Any]:
         database, project, jobs = self._require_project()
         compiled = compile_template(project["pathTemplate"])
-        return jobs.submit("scan", project["id"], {}, lambda context: scan_project(
-            database, project, compiled, lambda current, total, message: context.progress(current, total, message)
-        ))
+
+        def register(context: JobContext) -> dict[str, Any]:
+            result = register_assets(
+                database,
+                project,
+                compiled,
+                lambda current, total, message: context.progress(current, total, message),
+                context.cancel_event.is_set,
+            )
+            if result["cancelled"]:
+                return {**result, "state": "cancelled"}
+            analysis = jobs.submit(
+                "scan_analysis",
+                project["id"],
+                {"sourceJobId": context.job_id},
+                lambda analysis_context: analyze_assets(
+                    database,
+                    project,
+                    lambda current, total, message: analysis_context.progress(current, total, message),
+                    analysis_context.cancel_event.is_set,
+                ),
+            )
+            return {**result, "analysisJobId": analysis["id"]}
+
+        return jobs.submit("scan", project["id"], {}, register)
 
     def assets_query(self, params: dict[str, Any]) -> dict[str, Any]:
         database, project, _jobs = self._require_project()
-        clauses = ["project_id=?"]
-        values: list[Any] = [project["id"]]
+        base_clauses = ["project_id=?"]
+        base_values: list[Any] = [project["id"]]
+        kind = params.get("kind")
+        if kind:
+            if kind not in {"image", "animated", "novel", "unsupported"}:
+                raise ValueError("未知资源类型")
+            base_clauses.append("kind=?")
+            base_values.append(kind)
         state = params.get("reviewState")
+        if "eligible" in params and params["eligible"] is not None:
+            base_clauses.append("eligible=?")
+            base_values.append(int(bool(params["eligible"])))
+        if params.get("age"):
+            base_clauses.append("json_extract(metadata_json,'$.age')=?")
+            base_values.append(params["age"])
+        if params.get("ai"):
+            if params["ai"] == "AI": base_clauses.append("json_extract(metadata_json,'$.AI')='AI'")
+            else: base_clauses.append("json_extract(metadata_json,'$.AI') IS NULL")
+        if params.get("search"):
+            base_clauses.append("(relative_path LIKE ? OR metadata_json LIKE ?)")
+            term = f"%{params['search']}%"
+            base_values.extend([term, term])
+        clauses = list(base_clauses)
+        values = list(base_values)
         if state and state != "all":
             clauses.append("review_state=?")
             values.append(state)
-        if "eligible" in params and params["eligible"] is not None:
-            clauses.append("eligible=?")
-            values.append(int(bool(params["eligible"])))
-        if params.get("age"):
-            clauses.append("json_extract(metadata_json,'$.age')=?")
-            values.append(params["age"])
-        if params.get("ai"):
-            if params["ai"] == "AI": clauses.append("json_extract(metadata_json,'$.AI')='AI'")
-            else: clauses.append("json_extract(metadata_json,'$.AI') IS NULL")
-        if params.get("search"):
-            clauses.append("(relative_path LIKE ? OR metadata_json LIKE ?)")
-            term = f"%{params['search']}%"
-            values.extend([term, term])
         where = " AND ".join(clauses)
         order = {
             "score_desc": "technical_score DESC, relative_path ASC",
@@ -256,8 +286,9 @@ class WorkerService:
         offset = max(0, int(params.get("offset", 0)))
         rows = database.fetch_all(f"SELECT * FROM assets WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?", (*values, limit, offset))
         total_row = database.fetch_one(f"SELECT COUNT(*) AS count FROM assets WHERE {where}", values)
+        base_where = " AND ".join(base_clauses)
         counts_rows = database.fetch_all(
-            "SELECT review_state,COUNT(*) AS count FROM assets WHERE project_id=? GROUP BY review_state", (project["id"],)
+            f"SELECT review_state,COUNT(*) AS count FROM assets WHERE {base_where} GROUP BY review_state", base_values
         )
         counts = {"pending": 0, "kept": 0, "rejected": 0}
         counts.update({row["review_state"]: row["count"] for row in counts_rows})

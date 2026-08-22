@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS assets (
     size_bytes INTEGER NOT NULL,
     mtime_ns INTEGER NOT NULL,
     sha256 TEXT,
+    analysis_previous_sha256 TEXT,
     perceptual_hash TEXT,
     width INTEGER,
     height INTEGER,
@@ -169,6 +170,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            asset_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(assets)")}
+            if "analysis_previous_sha256" not in asset_columns:
+                connection.execute("ALTER TABLE assets ADD COLUMN analysis_previous_sha256 TEXT")
             connection.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

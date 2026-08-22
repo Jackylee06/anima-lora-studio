@@ -187,6 +187,7 @@ export interface WorkerEvent<T = unknown> {
 
 export interface AssetQuery {
   reviewState?: ReviewState | "all";
+  kind?: Asset["kind"];
   eligible?: boolean;
   search?: string;
   age?: string;

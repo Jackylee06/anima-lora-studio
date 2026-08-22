@@ -5,7 +5,7 @@ import { Button, Panel } from "../components/ui";
 import type { Page } from "../components/Sidebar";
 import { errorMessage, rpc } from "../lib/api";
 
-export function Dashboard({ project, onPage }: { project: Project; onPage: (page: Page) => void }) {
+export function Dashboard({ project, onPage, refreshToken }: { project: Project; onPage: (page: Page) => void; refreshToken: number }) {
   const [summary, setSummary] = useState<AssetPage | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -13,7 +13,7 @@ export function Dashboard({ project, onPage }: { project: Project; onPage: (page
   async function refresh() {
     setSummary(await rpc<AssetPage>("assets.query", { limit: 1 }));
   }
-  useEffect(() => { void refresh(); }, [project.id]);
+  useEffect(() => { void refresh(); }, [project.id, refreshToken]);
 
   async function scan() {
     setBusy(true); setMessage(null);
@@ -50,4 +50,3 @@ export function Dashboard({ project, onPage }: { project: Project; onPage: (page
     </div>
   </div>;
 }
-

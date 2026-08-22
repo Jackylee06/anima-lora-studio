@@ -47,10 +47,11 @@ class JobManager:
         context = JobContext(job_id, self)
         with self._lock:
             self.contexts[job_id] = context
-            executor = self.gpu_pool if gpu else self.cpu_pool
-            self.futures[job_id] = executor.submit(self._run, context, task)
         job = self.get(job_id)
         self.emit("job.updated", job)
+        with self._lock:
+            executor = self.gpu_pool if gpu else self.cpu_pool
+            self.futures[job_id] = executor.submit(self._run, context, task)
         return job
 
     def _run(self, context: JobContext, task: Task) -> None:
@@ -139,4 +140,3 @@ class JobManager:
             "message": row["message"], "result": result, "error": row["error"],
             "startedAt": row["started_at"], "finishedAt": row["finished_at"], "createdAt": row["created_at"],
         }
-

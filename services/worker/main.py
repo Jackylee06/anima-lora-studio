@@ -19,9 +19,15 @@ write_lock = threading.Lock()
 
 
 def write_message(value: dict[str, Any]) -> None:
+    payload = (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     with write_lock:
-        sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
-        sys.stdout.flush()
+        binary = getattr(sys.stdout, "buffer", None)
+        if binary is not None:
+            binary.write(payload)
+            binary.flush()
+        else:
+            sys.stdout.write(payload.decode("utf-8"))
+            sys.stdout.flush()
 
 
 def emit(event: str, data: dict[str, Any]) -> None:
@@ -30,7 +36,8 @@ def emit(event: str, data: dict[str, Any]) -> None:
 
 def run() -> int:
     service = WorkerService(emit)
-    for raw_line in sys.stdin:
+    input_stream = getattr(sys.stdin, "buffer", sys.stdin)
+    for raw_line in input_stream:
         line = raw_line.strip()
         if not line:
             continue
@@ -59,4 +66,3 @@ def run() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
-

@@ -166,6 +166,32 @@ def scan_project(
     compiled_template: CompiledTemplate,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
+    registered = register_assets(database, project, compiled_template, progress)
+    analyzed = analyze_assets(database, project, progress)
+    counts = {
+        str(row["kind"]): int(row["count"])
+        for row in database.fetch_all(
+            "SELECT kind,COUNT(*) AS count FROM assets WHERE project_id=? GROUP BY kind", (project["id"],)
+        )
+    }
+    return {
+        "scanned": registered["scanned"],
+        "counts": counts,
+        "missing": registered["missing"],
+        "duplicateGroups": analyzed["duplicateGroups"],
+        "contentChanged": analyzed["contentChanged"],
+        "sourceMutated": False,
+    }
+
+
+def register_assets(
+    database: Database,
+    project: dict[str, Any],
+    compiled_template: CompiledTemplate,
+    progress: Callable[[int, int, str], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Quickly register filesystem metadata; image analysis is intentionally deferred."""
     source_root = Path(project["sourceRoot"]).resolve()
     workspace = Path(project["workspacePath"]).resolve()
     if not source_root.is_dir():
@@ -177,14 +203,19 @@ def scan_project(
     seen: set[str] = set()
     counts = defaultdict(int)
     now = utc_now()
+    records: list[tuple[Any, ...]] = []
+    was_cancelled = False
 
     for index, path in enumerate(files, start=1):
+        if cancelled and cancelled():
+            was_cancelled = True
+            break
         relative = path.relative_to(source_root).as_posix()
         suffix = path.suffix.lower()
         if suffix not in STATIC_EXTENSIONS | ANIMATED_EXTENSIONS | NOVEL_EXTENSIONS:
             continue
         if progress:
-            progress(index, len(files), relative)
+            progress(index, len(files), f"登记 {relative}")
         absolute = str(path.resolve())
         seen.add(absolute)
         stat = path.stat()
@@ -202,71 +233,188 @@ def scan_project(
             "technical_score": None, "perceptual_hash": None,
         }
         sha256: str | None = str(prior["sha256"]) if unchanged and prior and prior["sha256"] else None
+        analysis_previous_sha256: str | None = None
         thumbnail_path = thumbnails / f"{asset_id}.webp"
+        stored_thumbnail: str | None = None
 
         if suffix in NOVEL_EXTENSIONS:
             kind, exclusion_reason = "novel", "novel_not_trainable"
         elif suffix in ANIMATED_EXTENSIONS:
             kind, exclusion_reason = "animated", "animated_asset_excluded"
         else:
-            try:
-                if unchanged and prior and prior["width"] and Path(str(prior["thumbnail_path"] or "")).is_file():
-                    metrics = {
-                        "width": prior["width"], "height": prior["height"], "aspect_ratio": prior["aspect_ratio"],
-                        "blur_score": prior["blur_score"], "technical_score": prior["technical_score"],
-                        "perceptual_hash": prior["perceptual_hash"],
-                    }
-                else:
-                    metrics = _inspect_image(path, thumbnail_path)
-                if metrics.pop("animated", False):
-                    kind, exclusion_reason = "animated", "animated_asset_excluded"
-                elif metadata is None:
-                    kind, exclusion_reason = "image", "path_template_mismatch"
-                else:
-                    kind, eligible = "image", True
-                sha256 = sha256 or sha256_file(path)
-            except (UnidentifiedImageError, OSError, ValueError) as error:
-                kind, exclusion_reason = "unsupported", f"decode_failed:{type(error).__name__}"
+            if prior and prior["analysis_previous_sha256"]:
+                analysis_previous_sha256 = str(prior["analysis_previous_sha256"])
+            elif not unchanged and prior and prior["sha256"]:
+                analysis_previous_sha256 = str(prior["sha256"])
+            prior_kind = str(prior["kind"]) if prior else None
+            if unchanged and prior and prior_kind in {"animated", "unsupported"}:
+                kind = prior_kind
+                exclusion_reason = str(prior["exclusion_reason"] or "") or None
+            else:
+                kind = "image"
+                eligible = metadata is not None
+                exclusion_reason = None if eligible else "path_template_mismatch"
+            if unchanged and prior and prior["width"] and Path(str(prior["thumbnail_path"] or "")).is_file():
+                metrics = {
+                    "width": prior["width"], "height": prior["height"], "aspect_ratio": prior["aspect_ratio"],
+                    "blur_score": prior["blur_score"], "technical_score": prior["technical_score"],
+                    "perceptual_hash": prior["perceptual_hash"],
+                }
+                stored_thumbnail = str(prior["thumbnail_path"])
+            if analysis_previous_sha256:
+                eligible = False
+                exclusion_reason = "source_change_pending"
 
         counts[kind] += 1
         review_state = str(prior["review_state"]) if prior else "pending"
         created_at = str(prior["created_at"]) if prior else now
+        records.append((
+            asset_id, project["id"], absolute, relative, stored_thumbnail, kind, int(eligible), exclusion_reason,
+            review_state, stat.st_size, stat.st_mtime_ns, sha256, analysis_previous_sha256,
+            metrics["perceptual_hash"], metrics["width"], metrics["height"], metrics["aspect_ratio"],
+            metrics["blur_score"], metrics["technical_score"], json.dumps(metadata_json, ensure_ascii=False),
+            created_at, now,
+        ))
+
+    if records:
         with database.transaction() as connection:
-            connection.execute(
+            connection.executemany(
                 """INSERT INTO assets(
                     id,project_id,source_path,relative_path,thumbnail_path,kind,eligible,exclusion_reason,review_state,
-                    size_bytes,mtime_ns,sha256,perceptual_hash,width,height,aspect_ratio,blur_score,technical_score,
+                    size_bytes,mtime_ns,sha256,analysis_previous_sha256,perceptual_hash,width,height,aspect_ratio,blur_score,technical_score,
                     metadata_json,created_at,updated_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(project_id,source_path) DO UPDATE SET
                     relative_path=excluded.relative_path,thumbnail_path=excluded.thumbnail_path,kind=excluded.kind,
                     eligible=excluded.eligible,exclusion_reason=excluded.exclusion_reason,size_bytes=excluded.size_bytes,
-                    mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,perceptual_hash=excluded.perceptual_hash,
+                    mtime_ns=excluded.mtime_ns,sha256=excluded.sha256,
+                    analysis_previous_sha256=excluded.analysis_previous_sha256,perceptual_hash=excluded.perceptual_hash,
                     width=excluded.width,height=excluded.height,aspect_ratio=excluded.aspect_ratio,
                     blur_score=excluded.blur_score,technical_score=excluded.technical_score,
                     metadata_json=excluded.metadata_json,updated_at=excluded.updated_at""",
-                (
-                    asset_id, project["id"], absolute, relative, str(thumbnail_path) if thumbnail_path.exists() else None,
-                    kind, int(eligible), exclusion_reason, review_state, stat.st_size, stat.st_mtime_ns, sha256,
-                    metrics["perceptual_hash"], metrics["width"], metrics["height"], metrics["aspect_ratio"],
-                    metrics["blur_score"], metrics["technical_score"], json.dumps(metadata_json, ensure_ascii=False),
-                    created_at, now,
-                ),
+                records,
             )
 
-    missing = [path for path in existing if path not in seen]
+    missing = [] if was_cancelled else [path for path in existing if path not in seen]
     if missing:
         with database.transaction() as connection:
             connection.executemany(
                 "UPDATE assets SET eligible=0, exclusion_reason='source_missing', updated_at=? WHERE project_id=? AND source_path=?",
                 [(now, project["id"], item) for item in missing],
             )
-    duplicate_groups = assign_duplicate_groups(database, project["id"])
+    pending_row = database.fetch_one(
+        """SELECT COUNT(*) AS count FROM assets WHERE project_id=? AND kind='image'
+        AND (sha256 IS NULL OR thumbnail_path IS NULL OR width IS NULL)""",
+        (project["id"],),
+    )
     return {
         "scanned": sum(counts.values()),
         "counts": dict(counts),
         "missing": len(missing),
+        "pendingAnalysis": int(pending_row["count"]) if pending_row else 0,
+        "cancelled": was_cancelled,
+        "sourceMutated": False,
+    }
+
+
+def analyze_assets(
+    database: Database,
+    project: dict[str, Any],
+    progress: Callable[[int, int, str], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    workspace = Path(project["workspacePath"]).resolve()
+    thumbnails = workspace / "thumbnails"
+    rows = database.fetch_all(
+        """SELECT * FROM assets WHERE project_id=? AND kind='image'
+        AND (sha256 IS NULL OR thumbnail_path IS NULL OR width IS NULL) ORDER BY relative_path""",
+        (project["id"],),
+    )
+    updates: list[tuple[Any, ...]] = []
+    invalidations: list[str] = []
+    processed = failed = animated = 0
+    content_changed = 0
+    was_cancelled = False
+
+    def flush() -> None:
+        if not updates:
+            return
+        with database.transaction() as connection:
+            connection.executemany(
+                """UPDATE assets SET thumbnail_path=?,kind=?,eligible=?,exclusion_reason=?,sha256=?,
+                analysis_previous_sha256=NULL,perceptual_hash=?,width=?,height=?,aspect_ratio=?,blur_score=?,
+                technical_score=?,review_state=?,updated_at=? WHERE id=?""",
+                updates,
+            )
+            if invalidations:
+                now = utc_now()
+                connection.executemany(
+                    "UPDATE stage_results SET status='stale',updated_at=? WHERE asset_id=? AND status='succeeded'",
+                    [(now, asset_id) for asset_id in invalidations],
+                )
+                connection.executemany(
+                    "UPDATE caption_revisions SET status='needs_review' WHERE asset_id=? AND status='approved'",
+                    [(asset_id,) for asset_id in invalidations],
+                )
+                connection.executemany(
+                    "DELETE FROM semantic_groups WHERE asset_id=?",
+                    [(asset_id,) for asset_id in invalidations],
+                )
+        updates.clear()
+        invalidations.clear()
+
+    for index, row in enumerate(rows, start=1):
+        if cancelled and cancelled():
+            was_cancelled = True
+            break
+        path = Path(str(row["source_path"]))
+        if progress:
+            progress(index, len(rows), f"分析 {row['relative_path']}")
+        thumbnail_path = thumbnails / f"{row['id']}.webp"
+        metadata = json_value(row, "metadata_json", {})
+        previous_sha256 = str(row["analysis_previous_sha256"] or "") or None
+        try:
+            metrics = _inspect_image(path, thumbnail_path)
+            current_sha256 = sha256_file(path)
+            changed = previous_sha256 is not None and current_sha256 != previous_sha256
+            is_animated = bool(metrics.pop("animated", False))
+            if is_animated:
+                kind, eligible, reason = "animated", 0, "animated_asset_excluded"
+                animated += 1
+            else:
+                kind = "image"
+                eligible = int(bool(metadata.get("path_template_matched")))
+                reason = None if eligible else "path_template_mismatch"
+            updates.append((
+                str(thumbnail_path), kind, eligible, reason, current_sha256, metrics["perceptual_hash"],
+                metrics["width"], metrics["height"], metrics["aspect_ratio"], metrics["blur_score"],
+                metrics["technical_score"], "pending" if changed else row["review_state"], utc_now(), row["id"],
+            ))
+            if changed:
+                invalidations.append(str(row["id"]))
+                content_changed += 1
+            processed += 1
+        except (UnidentifiedImageError, OSError, ValueError) as error:
+            changed = previous_sha256 is not None
+            updates.append((
+                None, "unsupported", 0, f"decode_failed:{type(error).__name__}", None,
+                None, None, None, None, None, None, "pending" if changed else row["review_state"], utc_now(), row["id"],
+            ))
+            if changed:
+                invalidations.append(str(row["id"]))
+                content_changed += 1
+            failed += 1
+        if len(updates) >= 50:
+            flush()
+    flush()
+    duplicate_groups = 0 if was_cancelled else assign_duplicate_groups(database, project["id"])
+    return {
+        "processed": processed,
+        "failed": failed,
+        "animated": animated,
+        "contentChanged": content_changed,
         "duplicateGroups": duplicate_groups,
+        "cancelled": was_cancelled,
         "sourceMutated": False,
     }
 

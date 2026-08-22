@@ -16,6 +16,7 @@ export function App() {
   const [project, setProject] = useState<Project | null | undefined>(undefined);
   const [page, setPage] = useState<Page>("dashboard");
   const [jobs, setJobs] = useState<JobNotice[]>([]);
+  const [assetRevision, setAssetRevision] = useState(0);
   const [startupError, setStartupError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,6 +25,9 @@ export function App() {
       if (event.event === "job.updated") {
         const job = event.data as JobNotice;
         setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)].slice(0, 5));
+        if (["scan", "scan_analysis"].includes(job.kind) && job.state === "succeeded") {
+          setAssetRevision((current) => current + 1);
+        }
       }
     });
   }, []);
@@ -34,8 +38,8 @@ export function App() {
   return <div className="app-shell">
     <Sidebar project={project} page={page} onPage={setPage} />
     <main className="main-shell">
-      {page === "dashboard" && <Dashboard project={project} onPage={setPage} />}
-      {page === "gallery" && <Gallery />}
+      {page === "dashboard" && <Dashboard project={project} onPage={setPage} refreshToken={assetRevision} />}
+      {page === "gallery" && <Gallery refreshToken={assetRevision} />}
       {page === "captions" && <CaptionsPage project={project} />}
       {page === "training" && <TrainingPage project={project} />}
       {page === "settings" && <SettingsPage project={project} onProject={setProject} />}
@@ -49,7 +53,7 @@ function JobDock({ jobs, onDismiss }: { jobs: JobNotice[]; onDismiss: (id: strin
   if (!visible.length) return null;
   return <div className="job-dock">{visible.map((job) => <div className={`job-toast ${job.state}`} key={job.id}>
     <div className="toast-icon">{job.state === "failed" ? <AlertTriangle /> : job.state === "succeeded" ? <CheckCircle2 /> : <LoaderCircle className="spin" />}</div>
-    <div><strong>{job.kind}</strong><p>{job.error || job.message || (job.state === "queued" ? "等待执行" : "正在运行")}</p>{job.progressTotal > 0 && <div className="mini-progress"><span style={{ width: `${Math.min(100, job.progressCurrent / job.progressTotal * 100)}%` }} /></div>}</div>
+    <div><strong>{job.kind}</strong><p>{job.error || job.message || (job.state === "queued" ? "等待执行" : job.state === "succeeded" ? "已完成" : "正在运行")}</p>{job.progressTotal > 0 && <div className="mini-progress"><span style={{ width: `${Math.min(100, job.progressCurrent / job.progressTotal * 100)}%` }} /></div>}</div>
     {["succeeded", "failed"].includes(job.state) && <button onClick={() => onDismiss(job.id)}><X size={14} /></button>}
   </div>)}</div>;
 }
